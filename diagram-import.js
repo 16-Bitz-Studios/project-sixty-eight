@@ -30,6 +30,7 @@ function parse(text){
  let current=null;
  const flush=()=>{if(current){const x=row(current.raw,current.partno,current.callout);if(x)out.push(x);current=null;}};
  for(const line of lines){
+  if(/^(?:image\s*["“]|note:|see page|if installing|for installation)/i.test(line)){flush();continue;}
   if(skip.test(line)&&!line.match(skuRe)){if(current&&/^(?:required quantity|reqd)\b/i.test(line))current.raw+=' '+line;continue;}
   const skus=[...line.matchAll(skuRe)];
   if(skus.length){flush();for(let i=0;i<skus.length;i++){const m=skus[i],before=line.slice(0,m.index).trim(),callout=i===0?(before.match(/^\(?(\d{1,3})\)?[.)]?$/)?.[1]||''):'';let tail=line.slice(m.index+m[0].length,i+1<skus.length?skus[i+1].index:line.length).trim();const first=tail.match(/^\(?(\d{1,3})\)?\s+/);current={partno:m[0].toUpperCase(),callout:callout||(first?first[1]:''),raw:tail};if(i+1<skus.length)flush();}continue;}
