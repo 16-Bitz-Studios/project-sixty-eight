@@ -43,7 +43,8 @@ function captionLabels(caption,objects=[]){
  const description=norm(caption);
  const hits=patterns.filter(([,rx])=>rx.test(description)).map(([label])=>label);
  const exactObjects=objects.map(norm);
- for(const label of candidates)if(exactObjects.includes(norm(label))&&!hits.includes(label))hits.push(label);
+ for(const label of candidates){if(['unrelated object or unclear photo','assorted automotive parts','complete pickup truck'].includes(label))continue;const term=norm(label);if((exactObjects.includes(term)||(' '+description+' ').includes(' '+term+' '))&&!hits.includes(label))hits.push(label);}
+ if(!hits.includes('complete truck cab')&&!hits.includes('complete truck bed')&&!hits.includes('truck frame or chassis')&&/\b(?:a|the|complete|classic|vintage|old)\s+(?:chevrolet |chevy |pickup )*(?:pickup truck|truck)\b/.test(description)&&/\b(?:wheels?|tires?|parked|driving)\b/.test(description))hits.unshift('complete pickup truck');
  // Major assemblies take precedence over their incidental components.
  return [...new Set(hits)].slice(0,6);
 }
@@ -52,7 +53,7 @@ function rankQuick(groupScores,partScores){
  if(!first||!top)return {suggestions:[],uncertain:true};
  const unknown=top.label==='unrelated object or unclear photo'||top.label==='assorted automotive parts';
  const uncertain=unknown||first.score<.35||top.score<.28||(second&&top.score-second.score<.055);
- return {suggestions:partScores.filter(x=>!['unrelated object or unclear photo','assorted automotive parts'].includes(x.label)).slice(0,3),uncertain};
+ return {suggestions:unknown?[]:partScores.filter(x=>!['unrelated object or unclear photo','assorted automotive parts'].includes(x.label)).slice(0,3),uncertain:!!uncertain};
 }
 const progress=p=>{if(p.status==='progress')self.postMessage({type:'progress',file:p.file,progress:p.progress});};
 async function lib(){if(!library)library=(async()=>{const l=await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1');l.env.allowLocalModels=false;l.env.useBrowserCache=true;if(l.env.backends?.onnx?.wasm)l.env.backends.onnx.wasm.numThreads=1;return l})();return library;}
@@ -68,7 +69,7 @@ async function quickInspect(photo,category,id){
  const hint=category==='Body & cab'?groups[0]:category==='Engine & drivetrain'?groups[2]:category==='Bed & exterior'?groups[1]:category==='Interior & gauges'||category==='Electrical & wiring'?groups[4]:null;
  if(hint&&!chosen.includes(hint))chosen.push(hint);
  const parts=[...new Set([...chosen.flatMap(g=>g.parts),'unrelated object or unclear photo','assorted automotive parts'])];
- const prompts=parts.map(x=>labels[x]||'a photograph of an automotive '+x);
+ const prompts=parts.map(x=>labels[x]||'a photograph of a '+x+' from a classic 1967 to 1972 Chevrolet C10 pickup truck');
  self.postMessage({type:'analyzing',id,stage:'Compare specific parts'});
  const scored=(await classifier(photo,prompts)).map(r=>({label:parts[prompts.indexOf(r.label)],score:r.score})).filter(r=>r.label);
  return {...rankQuick(groupScores,scored),assembly:top.group.name,method:'Quick',description:'Assembly and part similarity suggestions; not a visual condition assessment.'};
