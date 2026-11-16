@@ -57,9 +57,10 @@ function hotspots(items,viewport,parsed){
  }
  return out;
 }
+function ocrHotspots(words,rows,width,height,zones){const groups=new Set(rows.map(r=>r.callout).filter(Boolean)),out=[];for(const w of words||[]){const m=String(w.text||'').trim().match(/^\(?([0-9]{1,3})\)?$/);if(!m||!groups.has(m[1])||Number(w.confidence)<65||!w.bbox)continue;const x=(w.bbox.x0+w.bbox.x1)/2/width,y=(w.bbox.y0+w.bbox.y1)/2/height;if(x<.025||x>.975||y<.035||y>.95||zones.some(z=>x>=z.x1&&x<=z.x2&&y>=z.y1&&y<=z.y2))continue;if(!out.some(p=>p.key===m[1]&&Math.abs(p.x-x)<.012&&Math.abs(p.y-y)<.012))out.push({key:m[1],label:m[1],x,y,ocr:true});}return out;}
 function groupRows(rows,key){return rows.filter(r=>key==='all'||(key.startsWith('sku:')?r.partno.toUpperCase()===key.slice(4):r.callout===key))}
 async function renderPage(doc,n,canvas,zoom=1){
- const page=await doc.getPage(n);try{const viewport=page.getViewport({scale:Math.min(3,1.7*zoom)});const content=await page.getTextContent();const parsed=tableRows(content.items,n);canvas.width=Math.ceil(viewport.width);canvas.height=Math.ceil(viewport.height);await page.render({canvas,canvasContext:canvas.getContext('2d'),viewport,background:'white'}).promise;return {rows:parsed.rows,hotspots:hotspots(content.items,viewport,parsed),width:viewport.width,height:viewport.height};}finally{page.cleanup();}
+ const page=await doc.getPage(n);try{const viewport=page.getViewport({scale:Math.min(3,1.7*zoom)});const content=await page.getTextContent();const parsed=tableRows(content.items,n);canvas.width=Math.ceil(viewport.width);canvas.height=Math.ceil(viewport.height);await page.render({canvas,canvasContext:canvas.getContext('2d'),viewport,background:'white'}).promise;const zones=parsed.zones.map(z=>{const a=viewport.convertToViewportPoint(z.x1,z.y+z.h),b=viewport.convertToViewportPoint(z.x2,z.y-z.h*.55);return {x1:Math.min(a[0],b[0])/viewport.width,x2:Math.max(a[0],b[0])/viewport.width,y1:Math.min(a[1],b[1])/viewport.height,y2:Math.max(a[1],b[1])/viewport.height}});return {rows:parsed.rows,hotspots:hotspots(content.items,viewport,parsed),zones,width:viewport.width,height:viewport.height};}finally{page.cleanup();}
 }
-g.CatalogDiagrams={positioned,tableRows,hotspots,groupRows,renderPage};
+g.CatalogDiagrams={positioned,tableRows,hotspots,ocrHotspots,groupRows,renderPage};
 })(globalThis);
