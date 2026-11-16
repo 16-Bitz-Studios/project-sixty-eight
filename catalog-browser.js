@@ -29,7 +29,7 @@ async function read(file,{active,progress,onTask}){
  if(doc.numPages>500)throw Error('PDF exceeds 500 pages. Split it into smaller files.');
  for(let n=1;n<=doc.numPages;n++){
   if(!active())throw Error('Stopped');progress(n,doc.numPages,rows.length);
-  let page;try{page=await doc.getPage(n);const c=await page.getTextContent();const text=g.PdfCatalog.linesFromItems(c.items);pages.push({page:n,text:text.slice(0,100000)});rows.push(...rowsFromText(text,n));}catch(e){if(!active())throw e;errors.push(n);}finally{page?.cleanup();}
+  let page;try{page=await doc.getPage(n);const c=await page.getTextContent();const text=g.PdfCatalog.linesFromItems(c.items);pages.push({page:n,text:text.slice(0,100000)});const diagramRows=g.CatalogDiagrams?.tableRows(c.items,n).rows||[];rows.push(...(diagramRows.length?diagramRows:rowsFromText(text,n)));}catch(e){if(!active())throw e;errors.push(n);}finally{page?.cleanup();}
   if(n%5===0)await new Promise(r=>setTimeout(r,0));
  }
  return {pages,rows:uniqueRows(rows),errors,count:doc.numPages};
