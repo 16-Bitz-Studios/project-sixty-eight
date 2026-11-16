@@ -1,0 +1,35 @@
+/* LMC exact-SKU quote lookup; public pages only, never changes carts. */
+(function(g){
+'use strict';
+const root='https://www.lmctruck.com',sku=v=>String(v||'').trim().toUpperCase(),valid=v=>/^\d{2}-\d{4}(?:-[A-Z0-9]{1,5})?$/.test(sku(v));
+const clean=v=>String(v||'').replace(/\s+/g,' ').trim();
+const cache=new Map(),pageCache=new Map(),rateCache=new Map();
+const now=()=>new Date().toISOString();
+function searchURL(v){return root+'/search?q='+encodeURIComponent(sku(v));}
+function retailerURL(v){try{const u=new URL(v,root);if(u.protocol!=='https:'||!['www.lmctruck.com','lmctruck.com'].includes(u.hostname)||u.username||u.password)return '';u.hash='';return u.href;}catch(e){return '';}}
+function quoteFromCells(cells,target){const i=cells.findIndex(x=>sku(x)===target);if(i<0)return null;const rest=cells.slice(i+1);if(!rest.length)return null;const prices=g.PartImporter.explicitMoney(rest.join(' | '));if(prices.length!==1)return null;const p=prices[0];if(!Number.isFinite(p.price)||p.price<=0)return null;return {amount:p.price,currency:p.currency||'USD',title:rest[0],availability:rest.find(x=>/\b(?:availability|in stock|out of stock|backorder|discontinued)\b/i.test(x))||''};}
+function exactRows(doc,v){const target=sku(v),hits=[];for(const row of doc.querySelectorAll('tr')){const cells=[...row.querySelectorAll('td')].map(c=>clean(c.textContent));const hit=quoteFromCells(cells,target);if(hit)hits.push(hit);}return hits;}
+function markdownRows(text,v){const target=sku(v),hits=[];for(const line of String(text||'').split(/\r?\n/)){if(!line.includes('|'))continue;const cells=line.split('|').map(clean);const hit=quoteFromCells(cells,target);if(hit)hits.push(hit);}return hits;}
+function choose(hits,url,target){if(!hits.length)return null;const unique=[...new Map(hits.map(p=>[p.amount+'|'+p.currency,p])).values()];if(unique.length!==1)throw Error('Different prices for the exact SKU — verify the variant manually.');return {...unique[0],sku:target,url,kind:'online',checkedAt:now()};}
+function docFrom(html){const t=document.createElement('template');t.innerHTML=html;return t.content;}
+function productLinks(doc,url){const links=[];for(const el of doc.querySelectorAll('.product-title a,.product-item a[href],.item-box a[href],a[href*="cb-"]')){const v=retailerURL(el.getAttribute('href'));if(v&&v!==url&&!/\/(?:search|cart|login|register|wishlist|compareproducts|faq)(?:[/?]|$)/i.test(v)&&!links.includes(v))links.push(v);}return links.slice(0,5);}
+function markdownLinks(text){const links=[];for(const m of String(text||'').matchAll(/\]\((https?:\/\/(?:www\.)?lmctruck\.com\/[^)\s]+)\)/gi)){const v=retailerURL(m[1]);if(v&&/cb-/i.test(v)&&!links.includes(v))links.push(v);}return links.slice(0,5);}
+async function request(url,options={},ms=12000){const c=new AbortController(),timer=setTimeout(()=>c.abort(),ms);try{const r=await fetch(url,{...options,credentials:'omit',referrerPolicy:'no-referrer',signal:c.signal});if(!r.ok)throw Error('HTTP '+r.status);if(Number(r.headers.get('content-length'))>6000000)throw Error('Page too large');const s=await r.text();if(s.length>6000000)throw Error('Page too large');return s;}finally{clearTimeout(timer)}}
+async function page(url,allowReader){const key=url+'|'+allowReader,old=pageCache.get(key);if(old&&Date.now()-old.at<180000)return old.value;let value;try{const html=await request(url,{mode:'cors'},5000);value={doc:docFrom(html),text:'',url};}catch(e){if(!allowReader)throw e;const raw=await request('https://r.jina.ai/'+url,{headers:{Accept:'application/json','X-Respond-With':'html','X-No-Cache':'true'}},22000),j=JSON.parse(raw),content=j?.data?.content;if(typeof content!=='string')throw Error('Reader did not return a page');const actual=retailerURL(j?.data?.url||url);if(!actual)throw Error('Reader returned another site');value={doc:/<(?:html|body|table|div|a)\b/i.test(content)?docFrom(content):null,text:content,url:actual};}
+pageCache.set(key,{at:Date.now(),value});return value;}
+function hitsFor(p,target){const hits=p.doc?exactRows(p.doc,target):[];return hits.length?hits:markdownRows(p.text,target);}
+function livePage(v){const u=retailerURL(v);return u&&!/\/(?:search|chevy-gmc-truck-suv-1967-1972)\/?(?:\?|$)/i.test(u)&&new URL(u).pathname!=='/'?u:'';}
+async function lookup(v,{url='',allowReader=true,force=false}={}){const target=sku(v);if(!valid(target))throw Error('Enter an exact LMC part number, including any suffix.');const old=cache.get(target);if(!force&&old&&Date.now()-old.at<900000)return old.quote;
+ const candidates=[];const add=u=>{u=livePage(u);if(u&&!candidates.includes(u))candidates.push(u);};add(url);
+ // Known official assembly page, verified against the live retailer table.
+ if(/^(?:38-(?:9528|9520|954[0-5]|957[01]|911[89]|912[01]|653[01]|785[01]|7376)|30-(?:1116|0230|0656|0937|1952))(?:-T)?$/.test(target))add(root+'/body-components/body-panels/cb-1967-72-front-steel-body-parts');
+ let error='No exact current listing found.';
+ const check=async u=>{const p=await page(u,allowReader),q=choose(hitsFor(p,target),p.url,target);if(q){cache.set(target,{at:Date.now(),quote:q});return q;}return null;};
+ for(const u of candidates){try{const q=await check(u);if(q)return q;}catch(e){error=e.message||error;}}
+ try{const p=await page(searchURL(target),allowReader);const q=choose(hitsFor(p,target),p.url,target);if(q){cache.set(target,{at:Date.now(),quote:q});return q;}const links=p.doc?productLinks(p.doc,p.url):markdownLinks(p.text);for(const u of links.slice(0,3)){if(candidates.includes(u))continue;try{const q=await check(u);if(q)return q;}catch(e){error=e.message||error;}}}catch(e){error=e.message||error;}
+ throw Error('Live SKU lookup unavailable. '+error+' Use the saved catalog price or open LMC search to verify manually.');
+}
+async function fx(currency){const c=g.PartImporter.currency(currency);if(c==='CAD')return {rate:1,date:now().slice(0,10),source:'CAD'};if(!c)throw Error('Confirm the listed currency.');let old=rateCache.get(c);if(old&&Date.now()-old.at<3600000)return old;const key='FX'+c+'CAD',url='https://www.bankofcanada.ca/valet/observations/'+key+'/json?recent=1';const j=JSON.parse(await request(url,{},12000));const o=j.observations?.at(-1),rate=Number(o?.[key]?.v);if(!Number.isFinite(rate)||rate<=0||!o?.d)throw Error('Daily exchange rate unavailable.');old={rate,date:o.d,source:'Bank of Canada',at:Date.now()};rateCache.set(c,old);return old;}
+function convert(q,rate){if(!q||!Number.isFinite(Number(q.amount))||Number(q.amount)<0||!Number.isFinite(Number(rate.rate))||Number(rate.rate)<=0)throw Error('Invalid quote or exchange rate');return {...q,estimate:(Number(q.amount)*Number(rate.rate)).toFixed(2),fxRate:rate.rate,fxDate:rate.date,fxSource:rate.source};}
+g.LmcPricing={valid,sku,searchURL,retailerURL,quoteFromCells,exactRows,markdownRows,choose,lookup,fx,convert};
+})(globalThis);
