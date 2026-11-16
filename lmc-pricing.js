@@ -6,7 +6,7 @@ const clean=v=>String(v||'').replace(/\s+/g,' ').trim();
 const cache=new Map(),pageCache=new Map(),rateCache=new Map();
 const now=()=>new Date().toISOString();
 function searchURL(v){return root+'/search?q='+encodeURIComponent(sku(v));}
-function retailerURL(v){try{const u=new URL(v,root);if(u.protocol!=='https:'||!['www.lmctruck.com','lmctruck.com'].includes(u.hostname)||u.username||u.password)return '';u.hash='';return u.href;}catch(e){return '';}}
+function retailerURL(v){if(typeof v!=='string'||!v.trim())return '';try{const u=new URL(v,root);if(u.protocol!=='https:'||!['www.lmctruck.com','lmctruck.com'].includes(u.hostname)||u.username||u.password)return '';u.hash='';return u.href;}catch(e){return '';}}
 function quoteFromCells(cells,target){const i=cells.findIndex(x=>sku(x)===target);if(i<0)return null;const rest=cells.slice(i+1);if(!rest.length)return null;const prices=g.PartImporter.explicitMoney(rest.join(' | '));if(prices.length!==1)return null;const p=prices[0];if(!Number.isFinite(p.price)||p.price<=0)return null;return {amount:p.price,currency:p.currency||'USD',title:rest[0],availability:rest.find(x=>/\b(?:availability|in stock|out of stock|backorder|discontinued)\b/i.test(x))||''};}
 function exactRows(doc,v){const target=sku(v),hits=[];for(const row of doc.querySelectorAll('tr')){const cells=[...row.querySelectorAll('td')].map(c=>clean(c.textContent));const hit=quoteFromCells(cells,target);if(hit)hits.push(hit);}return hits;}
 function markdownRows(text,v){const target=sku(v),hits=[];for(const line of String(text||'').split(/\r?\n/)){if(!line.includes('|'))continue;const cells=line.split('|').map(clean);const hit=quoteFromCells(cells,target);if(hit)hits.push(hit);}return hits;}
