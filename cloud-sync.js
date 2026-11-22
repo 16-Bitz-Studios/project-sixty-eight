@@ -2,7 +2,7 @@
  * The public OAuth client is the same as TruckLedger (same GitHub Pages origin).
  * Cloud records and photos remain private in each person's Drive appDataFolder.
  * No client secret, refresh token, access token or Google files stored in source. */
-(function(g){
+globalThis.CloudSync=(function(g){
 'use strict';
 const CLIENT='187913587103-pdc621877o3cdkfvfm1k704dm6kdis0p.apps.googleusercontent.com';
 const SCOPE='https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/userinfo.email';
