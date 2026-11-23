@@ -4,7 +4,7 @@ globalThis.ReceiptUI=(function(){
 const app=()=>globalThis.PS68_BRIDGE, $=id=>document.getElementById(id);
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const n=v=>Number(v)||0,fmt=v=>app().money(Number(v)||0);
-let draft=null,file=null,run=0,worker=null,busy=false;
+let draft=null,file=null,run=0,worker=null,busy=false,cropTool=null,preparedFile=null,previewPromise=null,previewSeq=0,ocrAttempts=[];
 const isHEIC=f=>/\.(?:heic|heif)$/i.test(f?.name||'')||/^image\/(?:heic|heif|heic-sequence|heif-sequence)$/i.test(f?.type||'');
 let heicLoader=null;
 async function loadHeicConverter(){
@@ -48,6 +48,8 @@ function receiptCard(r){
  '<button class="btn small" data-action="receiptedit-receipt" data-id="'+id+'">Edit</button><button class="btn small danger" data-action="receiptdelete-receipt" data-id="'+id+'">Delete</button></div></article>';
 }
 function stop(){run++;if(worker)worker.terminate().catch(()=>{});worker=null;busy=false;setBusy(false);}
+function clearCrop(){++previewSeq;const old=cropTool;cropTool=null;preparedFile=null;previewPromise=null;old?.dispose?.();}
+function showOCRAttempts(){const wrap=$('receiptocrdebug'),text=$('receiptocrattempts');if(!wrap||!text)return;wrap.hidden=!ocrAttempts.length;text.value=ocrAttempts.map((x,i)=>'=== OCR attempt '+(i+1)+': '+x.label+' · '+x.score+' points · '+x.rows+' rows ===\n'+x.raw).join('\n\n');}
 function status(v){if($('receiptstatus'))$('receiptstatus').textContent=v;}
 function summary(){
  if(!$('receiptcount'))return;const selected=draft.lines.filter(l=>l.selected),items=selected.reduce((sum,l)=>sum+n(l.lineTotal),0),total=$('rtotal').value.trim()===''?NaN:Number($('rtotal').value),currency=$('rcurrency').value,rate=Number($('rrate').value),cad=currency==='CAD'?total:total*rate;
@@ -75,13 +77,13 @@ function editRows(){
  summary();
 }
 function open(id){
- if(busy)return;stop();const prior=app().data.receipts.find(x=>x.id===id);draft=prior?JSON.parse(JSON.stringify(prior)):{id:app().uid(),merchant:'',date:app().dateNow(),currency:'CAD',fxRate:1,subtotal:'',tax:'',total:'',totalCAD:'',lines:[],raw:'',sourceData:'',filename:''};file=null;
+ if(busy)return;stop();clearCrop();ocrAttempts=[];const prior=app().data.receipts.find(x=>x.id===id);draft=prior?JSON.parse(JSON.stringify(prior)):{id:app().uid(),merchant:'',date:app().dateNow(),currency:'CAD',fxRate:1,subtotal:'',tax:'',total:'',totalCAD:'',lines:[],raw:'',sourceData:'',filename:''};file=null;
  $('receiptheading').textContent=prior?'Edit receipt':'Scan receipt or invoice';
  $('receiptfields').innerHTML='<div class="receipt-form"><p class="muted">Photograph a receipt or import an email invoice PDF. Text recognition is local. Confirm the merchant, product names, quantities, prices, tax and final total before saving.</p>'+
  '<div class="pair"><label>Take photo<input id="receiptcamera" type="file" accept="image/*" capture="environment"></label><label>Choose image or PDF<input id="receiptfile" type="file" accept="image/*,.heic,.heif,application/pdf,.pdf"></label></div>'+
- '<p id="receiptfilename" class="muted">'+esc(draft.filename||'No document selected')+'</p><label class="check"><input type="checkbox" id="receiptenhance" checked> Enhance dark / low-contrast receipt photos for text reading</label><div class="actions"><button type="button" class="btn primary" id="receiptocr">Read receipt</button><button class="btn small danger" type="button" id="receiptstop" hidden>Stop OCR</button></div>'+
- '<p class="muted" id="receiptstatus" role="status">Select a document, or paste invoice text below.</p>'+
- '<details><summary>Paste / correct receipt text</summary><textarea rows="6" id="receiptraw" placeholder="Canadian Tire&#10;2026-11-23&#10;1234567 SANDING DISCS 29.99&#10;TOTAL 33.59">'+esc(draft.raw||'')+'</textarea><button type="button" class="btn small" id="receiptparse">Extract lines from text</button></details>'+
+ '<p id="receiptfilename" class="muted">'+esc(draft.filename||'No document selected')+'</p><div id="receiptcropmount"></div><label class="check"><input type="checkbox" id="receiptenhance" checked> Enhance dark / low-contrast receipt photos for text reading</label><div class="actions"><button type="button" class="btn primary" id="receiptocr">Read receipt</button><button class="btn small danger" type="button" id="receiptstop" hidden>Stop OCR</button></div>'+
+ '<p class="muted" id="receiptstatus" role="status">Select a document, or paste invoice text below.</p><details id="receiptocrdebug" hidden><summary>View all OCR attempts (diagnostics)</summary><p class="muted">The unedited text produced by each on-device OCR attempt. No upload is needed to view it.</p><textarea id="receiptocrattempts" rows="8" readonly></textarea></details>'+
+ '<details><summary>View / correct recognized receipt text, or paste text from Google Lens</summary><textarea rows="6" id="receiptraw" placeholder="Canadian Tire&#10;2026-11-23&#10;1234567 SANDING DISCS 29.99&#10;TOTAL 33.59">'+esc(draft.raw||'')+'</textarea><button type="button" class="btn small" id="receiptparse">Extract lines from text</button></details>'+
  '<div class="pair"><label>Merchant<input id="rmerchant" maxlength="120" value="'+esc(draft.merchant)+'"></label><label>Purchase date<input type="date" id="rdate" value="'+esc(draft.date)+'"></label></div>'+
  '<div class="pair"><label>Currency<select id="rcurrency">'+['CAD','USD','EUR','GBP','AUD','NZD','JPY','CHF'].map(c=>'<option'+(c===draft.currency?' selected':'')+'>'+c+'</option>').join('')+'</select></label>'+
  '<label>CAD per 1 unit<input id="rrate" type="number" step="any" min="0.000001" value="'+esc(draft.currency==='CAD'?1:draft.fxRate||'')+'"></label></div><button class="btn small" id="receiptfx" type="button">Get Bank of Canada rate</button>'+
@@ -91,31 +93,54 @@ function open(id){
  '<p class="muted">The final receipt total counts once toward project spending. Individual line prices are not added again. You can send physical parts to Inventory after saving.</p></div>';
  $('receiptcamera').onchange=pick;$('receiptfile').onchange=pick;$('receiptocr').onclick=recognize;$('receiptstop').onclick=()=>{stop();status('Stopped. Reviewed lines are unchanged.')};$('receiptparse').onclick=()=>{if(draft.lines.some(x=>x.partId)){status('Linked inventory lines cannot be replaced by OCR. Edit the existing lines below.');return;}if(draft.lines.length&&!confirm('Replace current line items from this text?'))return;parseText($('receiptraw').value)};
  $('receiptadd').onclick=()=>{draft.lines.push(row({description:'',qty:1}));editRows()};$('receiptlookupall').onclick=lookupAll;$('rcurrency').onchange=()=>{$('rrate').value=$('rcurrency').value==='CAD'?'1':'';summary()};$('rrate').oninput=summary;$('rtotal').oninput=summary;
- $('receiptfx').onclick=fx;$('receiptcancel').onclick=()=>{stop();$('receiptdialog').close()};$('receiptsave').onclick=save;
+ $('receiptfx').onclick=fx;$('receiptcancel').onclick=()=>{stop();clearCrop();$('receiptdialog').close()};$('receiptsave').onclick=save;
  $('receiptdialog').oncancel=e=>{if(busy){e.preventDefault();stop();status('OCR stopped. Close again to exit.')}};
  $('receiptdialog').showModal();$('receiptheading').focus({preventScroll:true});editRows();
 }
-function pick(e){const f=e.target.files?.[0];if(!f)return;if(f.size>15000000){status('Receipt must be under 15 MB. Try a smaller photo or PDF.');e.target.value='';return;}if(draft.lines.some(x=>x.partId)){status('This receipt has items linked to Inventory. Keep the original invoice or delete the receipt before importing a different one.');e.target.value='';return;}if(draft.lines.length&&!confirm('Replace reviewed lines with a new receipt?')){e.target.value='';return;}file=f;draft.sourceData='';draft.filename=f.name;$('receiptfilename').textContent=f.name;status(isHEIC(f)?'HEIC image selected. Tap Read receipt to convert it locally and scan.':'File ready. Tap Read receipt.');}
+async function pick(e){
+ const f=e.target.files?.[0];if(!f)return;
+ if(f.size>15000000){status('Receipt must be under 15 MB. Try a smaller photo or PDF.');e.target.value='';return;}
+ if(draft.lines.some(x=>x.partId)){status('Linked inventory lines cannot be replaced by OCR. Edit those items instead.');e.target.value='';return;}
+ if(draft.lines.length&&!confirm('Replace reviewed lines with another receipt photo?')){e.target.value='';return;}
+ clearCrop();ocrAttempts=[];showOCRAttempts();file=f;draft.sourceData='';draft.filename=f.name;
+ $('receiptfilename').textContent=f.name;
+ const host=$('receiptcropmount');host.replaceChildren();
+ if(f.type==='application/pdf'||/\.pdf$/i.test(f.name)){status('PDF selected. Tap Read receipt to process it.');return;}
+ const seq=++previewSeq;
+ status('Preparing image preview so you can crop the receipt…');
+ previewPromise=(async()=>{
+  try{
+   const image=await readableImage(f);if(seq!==previewSeq||file!==f)return;
+   preparedFile=image;
+   const tool=await ReceiptCrop.mount(image,host);
+   if(seq!==previewSeq||file!==f){tool.dispose();return;}
+   cropTool=tool;
+   status('Drag a rectangle tightly around the receipt, then tap Read receipt. The full original photo remains attached.');
+  }catch(err){if(seq===previewSeq&&file===f)status('Crop preview unavailable: '+(err.message||err)+'. You can still try Read receipt with the original photo.');}
+ })();
+ await previewPromise;
+}
 function ocrScore(text){const r=ReceiptImport.parse(text);const items=r.lines.filter(l=>!/\b(?:gift card|payment|total|subtotal|gst|pst)\b/i.test(l.description));return items.reduce((sum,l)=>sum+(l.sku?12:5),0)+(r.subtotal!==null?4:0)+(r.total!==null?6:0)+(r.tax!==null?2:0)-r.warnings.length*3;}
 function thresholdCanvas(canvas){const ctx=canvas.getContext('2d',{willReadFrequently:true}),image=ctx.getImageData(0,0,canvas.width,canvas.height),p=image.data;let dark=0,light=0;for(let i=0;i<p.length;i+=4){const v=.299*p[i]+.587*p[i+1]+.114*p[i+2];dark+=v;light++;}const mean=dark/Math.max(light,1),cutoff=Math.min(205,Math.max(130,mean*.91));for(let i=0;i<p.length;i+=4){const gray=.299*p[i]+.587*p[i+1]+.114*p[i+2];const b=gray>cutoff?255:0;p[i]=p[i+1]=p[i+2]=b;}ctx.putImageData(image,0,0);return canvas;}
-async function ocrReceiptPhoto(readable,token){
+async function ocrReceiptPhoto(readable,token,cropCanvas=null){
  // Receipts are long narrow documents. General OCR PSM 6 often reads just
  // the totals. PSM 11 recognizes sparse rows and PSM 4 respects columns.
- const attempts=[];const push=(label,raw)=>{const score=ocrScore(raw);attempts.push({label,raw,score,rows:ReceiptImport.parse(raw).lines.length});};
- const original=await DiagramImporter.recognize(readable,m=>{if(token===run)status('First pass (original): '+m)},w=>{worker=w},false,11);
+ const attempts=[];const push=(label,raw)=>{const score=ocrScore(raw);attempts.push({label,raw,score,rows:ReceiptImport.parse(raw).lines.length});};const input=cropCanvas||readable;
+ const original=await DiagramImporter.recognize(input,m=>{if(token===run)status('First pass (receipt crop): '+m)},w=>{worker=w},false,11);
  if(token!==run)return '';
  push('original sparse text',original);
  let best=attempts[0];
  if(best.rows===0||!ReceiptImport.parse(best.raw).lines.some(l=>l.sku)){
   status('Trying receipt column layout…');
-  const next=await DiagramImporter.recognize(readable,m=>{if(token===run)status('Second pass (receipt rows): '+m)},w=>{worker=w},false,4);
+  const next=await DiagramImporter.recognize(input,m=>{if(token===run)status('Second pass (receipt rows): '+m)},w=>{worker=w},false,4);
   if(token!==run)return '';
   push('original receipt columns',next);
   best=attempts.reduce((a,b)=>b.score>a.score?b:a);
  }
  if((best.rows===0||!ReceiptImport.parse(best.raw).lines.some(l=>l.sku))&&$('receiptenhance')?.checked){
   status('Trying enhanced monochrome image to recover item numbers…');
-  const canvas=await enhancedImage(readable);
+  const canvas=cropCanvas?document.createElement('canvas'):await enhancedImage(readable);
+  if(cropCanvas){canvas.width=cropCanvas.width;canvas.height=cropCanvas.height;canvas.getContext('2d').drawImage(cropCanvas,0,0);enhanceCanvas(canvas);}
   thresholdCanvas(canvas);
   try{
    const next=await DiagramImporter.recognize(canvas.toDataURL('image/png'),m=>{if(token===run)status('Third pass (high contrast): '+m)},w=>{worker=w},false,6);
@@ -124,6 +149,7 @@ async function ocrReceiptPhoto(readable,token){
   }finally{canvas.width=canvas.height=1;}
  }
  best=attempts.reduce((a,b)=>b.score>a.score?b:a);
+ if(token===run){ocrAttempts=attempts;showOCRAttempts();}
  if(token===run)status('Selected '+best.label+' OCR with '+best.rows+' detected purchase rows. '+(best.rows?'Review the scan.':'No reliable line items found. Try better lighting, a flatter receipt, or enter items manually.'));
  return best.raw;
 }
@@ -142,8 +168,8 @@ async function recognize(){
       }chunks.push(text);}finally{page.cleanup();}
     }raw=chunks.join('\n');}finally{if(task)await task.destroy().catch(()=>{})}
    source=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(String(r.result||'').replace(/^data:[^;]*;base64,/,'data:application/pdf;base64,'));r.onerror=()=>reject(Error('PDF attachment unavailable'));r.readAsDataURL(f)});
-  }else{const readable=await readableImage(f);if(token!==run)return;
-    raw=await ocrReceiptPhoto(readable,token);
+  }else{if(previewPromise)await previewPromise;const readable=preparedFile||await readableImage(f);if(token!==run)return;
+    let crop=null;try{crop=cropTool?.extract(3200)||null;raw=await ocrReceiptPhoto(readable,token,crop);}finally{if(crop)crop.width=crop.height=1;}
     if(token!==run)return;
     source=await app().compressPhoto(readable);
     if(isHEIC(f)){draft.filename=readable.name;if($('receiptfilename'))$('receiptfilename').textContent=f.name+' → '+readable.name+' (converted locally)';}}
@@ -164,7 +190,7 @@ async function save(){
  if(!app().validReceipt(record))return status('Invalid receipt or too-large attachment. Try reducing the PDF/photo size.');
  const duplicate=app().data.receipts.find(x=>x.id!==record.id&&x.merchant.trim().toLowerCase()===record.merchant.trim().toLowerCase()&&x.date===record.date&&Math.abs(Number(x.totalCAD)-record.totalCAD)<0.01);if(duplicate&&!confirm('Another receipt from the same retailer, date and total is already saved. Recording this again may double-count the purchase. Continue anyway?'))return;
  if(!confirm('Record '+merchant+' · '+fmt(record.totalCAD)+' CAD, including taxes, as one paid invoice?'))return;
- const a=app().data.receipts,i=a.findIndex(x=>x.id===record.id);if(i<0)a.unshift(record);else a[i]=record;await app().save();$('receiptdialog').close();file=null;app().render();if(app().saveError)alert('Storage failed. Export a JSON backup now.');
+ const a=app().data.receipts,i=a.findIndex(x=>x.id===record.id);if(i<0)a.unshift(record);else a[i]=record;await app().save();$('receiptdialog').close();file=null;clearCrop();app().render();if(app().saveError)alert('Storage failed. Export a JSON backup now.');
 }
 function remove(id){const r=app().data.receipts.find(x=>x.id===id);if(!r)return;if(!confirm('Delete '+r.merchant+' receipt and remove '+fmt(r.totalCAD)+' from spending? Linked parts remain in Inventory, and their independent recorded costs will count instead.'))return;app().data.receipts=app().data.receipts.filter(x=>x.id!==id);app().save();app().render();}
 function documentFile(id){const r=app().data.receipts.find(x=>x.id===id);if(!r?.sourceData)return;if(r.sourceData.startsWith('data:application/pdf')){const b=atob(r.sourceData.split(',')[1]),bytes=new Uint8Array(b.length);for(let i=0;i<b.length;i++)bytes[i]=b.charCodeAt(i);const url=URL.createObjectURL(new Blob([bytes],{type:'application/pdf'})),a=document.createElement('a');a.href=url;a.download=String(r.filename||'invoice.pdf').replace(/[^a-z0-9._ -]/gi,'_');a.click();setTimeout(()=>URL.revokeObjectURL(url),60000);}else{$('fullphoto').src=r.sourceData;$('photodialog').showModal();}}
