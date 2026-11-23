@@ -14,13 +14,13 @@ async function mount(file,host){
  const bitmap=await createImageBitmap(file);
  let angle=0,rect=null,anchor=null,disposed=false;
  const outer=document.createElement('div');outer.className='receipt-crop-tool';
- outer.innerHTML='<p class="muted">Drag a rectangle around the receipt (include the store name and final total). Cropping out the seat or table helps the text reader.</p><div class="receipt-crop-area"><canvas aria-label="Receipt photo; drag from one corner to the opposite corner to crop"></canvas><div class="receipt-crop-highlight" hidden></div></div><div class="actions"><button class="btn small" type="button" data-crop="reset">Use entire photo</button><button class="btn small" type="button" data-crop="rotate">Rotate 90°</button></div><p class="muted receipt-crop-note">Entire photo selected. Drag on the image to crop.</p>';
+ outer.innerHTML='<p class="muted">Drag a rectangle around the receipt (include the store name and final total). Cropping out the seat or table helps the text reader.</p><div class="receipt-crop-area"><div class="receipt-crop-stage"><canvas aria-label="Receipt photo; drag from one corner to the opposite corner to crop"></canvas><div class="receipt-crop-highlight" hidden></div></div></div><div class="actions"><button class="btn small" type="button" data-crop="reset">Use entire photo</button><button class="btn small" type="button" data-crop="rotate">Rotate 90°</button></div><p class="muted receipt-crop-note">Entire photo selected. Drag on the image to crop.</p>';
  host.replaceChildren(outer);
- const area=outer.querySelector('.receipt-crop-area'),canvas=outer.querySelector('canvas'),box=outer.querySelector('.receipt-crop-highlight'),note=outer.querySelector('.receipt-crop-note');
+ const stage=outer.querySelector('.receipt-crop-stage'),canvas=outer.querySelector('canvas'),box=outer.querySelector('.receipt-crop-highlight'),note=outer.querySelector('.receipt-crop-note');
  const dimensions=()=>angle%180===0?{w:bitmap.width,h:bitmap.height}:{w:bitmap.height,h:bitmap.width};
  function draw(){
   if(disposed)return;
-  const {w,h}=dimensions(),scale=Math.min(1,1100/Math.max(w,h));
+  const {w,h}=dimensions(),scale=Math.min(1,1100/Math.max(w,h));stage.style.width='min(100%, '+Math.round(w/h*56*100)/100+'vh)';
   canvas.width=Math.max(1,Math.round(w*scale));canvas.height=Math.max(1,Math.round(h*scale));
   const ctx=canvas.getContext('2d');ctx.fillStyle='white';ctx.fillRect(0,0,canvas.width,canvas.height);
   ctx.save();ctx.translate(canvas.width/2,canvas.height/2);ctx.rotate(angle*Math.PI/180);
