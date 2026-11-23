@@ -16,3 +16,15 @@ After the first connection, the app saves an initial compressed snapshot of the 
 - **Google grants expire** and need a user-initiated reconnect. Closing the app, losing connectivity, or disabling authorization pauses syncing. Offline changes remain local. This is not always-on background sync; it only runs during an authorized app session.
 - **Large media:** cloud snapshots use gzip compression with explicit size limits (55 MB before compression and 40 MB uploaded). LMC's entire catalog is not uploaded; only catalog files explicitly saved in your restoration records are included.
 - **Scope:** do not store a Google OAuth client secret in a browser app. Google Drive files live in the user's hidden application-data folder; they are separate from the public GitHub Pages source code.
+
+## Receipt and invoice scanning (cache v25)
+
+The **Receipts** tab accepts photos from the Android/iPhone camera, existing images, store receipts, emailed PDFs (including Amazon invoices), or pasted confirmation text. Tesseract OCR runs locally in the browser. Text-based PDF invoices are read with PDF.js first; scanned PDF pages use local OCR. Receipt documents must be under 10 MB. The review screen extracts individual line items where available and lets you edit the description, product number, quantity, category, price, merchant, date, subtotal, tax, and final amount paid.
+
+For Canadian Tire or another retailer, tap **Find SKU description**, **Look up product numbers** (up to 8, with explicit consent), or the direct public product search link. These are **unverified suggestions**, and availability varies by retailer and access restrictions. No source receipt or payment data are uploaded by the lookup; only the retailer and the public product SKU are used. The importer never overwrites paid prices based on an online listing.
+
+All purchase totals are recorded in CAD; foreign invoices require a user-selected exchange rate, with a Bank of Canada reference-rate option. The **full paid invoice total** (including tax and shipping as entered) contributes exactly once to project cash investment. Item lines do not independently add money. After saving, a purchased physical component can be sent to **Parts (Received) + Inventory**: its unit cost is recorded for reference, but that linked part's cost is excluded from independent parts spending to prevent double counting. Other consumable items (paint, sanding discs, rags, masking materials) remain as expense lines on the invoice.
+
+Receipt source files and line items are included in JSON exports and optional Google Drive synchronization. The localStorage mirror omits bulky receipt attachments, which are retained in IndexedDB; the existing missing-photo-database protection also applies to these attachments. The importer is review-first and will not blindly book an invoice or rely on OCR totals without user confirmation. A printed product number, quantity, currency, GST/PST, freight or line layout may need manual correction.
+
+Existing project data keys and all older saved task, part, lead, inventory, sale and catalog schemas remain unchanged.
