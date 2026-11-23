@@ -51,7 +51,7 @@ function stop(){run++;if(worker)worker.terminate().catch(()=>{});worker=null;bus
 function status(v){if($('receiptstatus'))$('receiptstatus').textContent=v;}
 function summary(){
  if(!$('receiptcount'))return;const selected=draft.lines.filter(l=>l.selected),items=selected.reduce((sum,l)=>sum+n(l.lineTotal),0),total=$('rtotal').value.trim()===''?NaN:Number($('rtotal').value),currency=$('rcurrency').value,rate=Number($('rrate').value),cad=currency==='CAD'?total:total*rate;
- $('receiptcount').textContent=selected.length+' selected · Items subtotal '+items.toFixed(2)+' '+currency+' · Invoice '+(Number.isFinite(total)?total.toFixed(2):'?')+' '+currency+(Number.isFinite(cad)&&cad>0?' ≈ '+fmt(cad)+' CAD':' · CAD rate required');
+ $('receiptcount').textContent=selected.length+' selected · Items subtotal '+items.toFixed(2)+' '+currency+' · Invoice '+(Number.isFinite(total)?total.toFixed(2):'?')+' '+currency+(Number.isFinite(cad)&&cad>0?' ≈ '+fmt(cad)+' CAD':!Number.isFinite(total)?' · Enter final total':' · CAD rate required');
  $('receiptsave').disabled=busy||!Number.isFinite(total)||total<=0||(currency!=='CAD'&&!(rate>0))||!selected.some(l=>l.description.trim());
 }
 function setBusy(v){busy=v;for(const id of ['receiptcamera','receiptfile','receiptocr','receiptparse','receiptadd','receiptcancel','receiptsave'])if($(id))$(id).disabled=v;if($('receiptstop'))$('receiptstop').hidden=!v;if(!v)summary();}
