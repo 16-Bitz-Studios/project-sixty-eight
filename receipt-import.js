@@ -2,7 +2,7 @@
 'use strict';
 const clean=v=>String(v||'').replace(/\s+/g,' ').trim();
 const cents=v=>{const n=Number(String(v||'').replace(/[$, ]/g,''));return Number.isFinite(n)&&n>=0&&n<10000000?Math.round(n*100)/100:null};
-const totals=/^(?:subtotal|sub total|total\b|grand total|amount due|amount paid|balance due|gst\b|hst\b|pst\b|tax\b|qst\b|shipping|delivery|discount|coupon|savings|cash|change|visa|mastercard|debit|credit card|payment|tender|invoice|receipt|auth|order no|order number|transaction|store #)/i;
+const totals=/^(?:subtotal|sub total|total\b|grand total|amount due|amount paid|balance due|gst\b|hst\b|pst\b|tax\b|qst\b|shipping|delivery|discount|coupon|savings|cash|change|visa|mastercard|debit|credit card|payment|tender|gift\s*card|gift\s*certificate|invoice|receipt|auth|order no|order number|transaction|store #)/i;
 const noise=/^(?:thank you|return|refund|survey|visit us|www\.|https?:|phone|tel\b|qty\s+item|item\s+qty|sku\s+description|description\s+qty|scan|cashier|points|loyalty|terms)/i;
 function category(t){return /\b(?:paint|primer|clear coat|spray|sealer|sanding|sandpaper|sand ?discs?|abrasive|body filler|masking|polish|rags?|shop towels?|microfibre|microfiber|gloves?|degreaser|solvent|thinner|compound)\b/i.test(t)?'Paint & finishing':g.PartImporter.category(t);}
 function store(t){for(const [re,n] of [[/canadian\s*tire/i,'Canadian Tire'],[/amazon/i,'Amazon'],[/home\s*depot/i,'Home Depot'],[/princess\s*auto/i,'Princess Auto'],[/rock\s*auto/i,'RockAuto'],[/napa\s*auto/i,'NAPA'],[/lmc\s*truck/i,'LMC Truck'],[/walmart/i,'Walmart'],[/costco/i,'Costco']])if(re.test(t.slice(0,2000)))return n;return clean(t.split('\n').find(x=>x.trim().length>3)||'Unknown retailer').slice(0,120);}
@@ -11,7 +11,7 @@ function parse(text){
  const raw=String(text||'').slice(0,100000),lines=raw.split(/\r?\n/).map(clean).filter(Boolean),found=[];let subtotal=null,tax=null,total=null,pastTotal=false,currency=/\b(?:USD|US\$)\b/i.test(raw)?'USD':'CAD';
  for(let i=0;i<lines.length;i++){
   const line=lines[i],ending=line.match(/(?:^|\s)\$?\s*(\d{1,7}(?:,\d{3})*\.\d{2})(?:\s*[A-Z])?$/),price=ending?cents(ending[1]):null;
-  if(price!==null&&/^(?:grand total|order total|total(?: due)?|amount due|amount paid)\b/i.test(line)){total=price;pastTotal=true;continue;}
+  if(price!==null&&/^(?:(?:grand |order )?total(?: due)?\b|t\s*o\s*t\s*a\s*l\b|amount due\b|amount paid\b)/i.test(line)){total=price;pastTotal=true;continue;}
   if(price!==null&&/^(?:sub ?total)\b/i.test(line)){subtotal=price;continue;}
   if(price!==null&&/^(?:gst|hst|pst|qst|tax)\b/i.test(line)){tax=Math.round(((tax||0)+price)*100)/100;continue;}
   if(pastTotal||totals.test(line)||noise.test(line)||!ending||price===null||price<=0)continue;
@@ -19,7 +19,7 @@ function parse(text){
   let sku='',qty=1,unitPrice=price;
   const named=title.match(/\b(?:SKU|ITEM(?: NO| #)?|PART(?: NO| #)?|ASIN|UPC)\s*[:#-]?\s*([A-Z0-9][A-Z0-9./-]{3,24})\b/i);
   if(named){sku=named[1].toUpperCase();title=clean(title.replace(named[0],''));}
-  else{const lead=title.match(/^(\d{5,12}|[A-Z]{1,3}-?\d{4,12}(?:-[A-Z0-9]{1,5})?)\s+/i);if(lead){sku=lead[1].toUpperCase();title=clean(title.slice(lead[0].length));}}
+  else{const lead=title.match(/^(\d{3}-\d{4}-\d|\d{2}-\d{4}(?:-[A-Z0-9]{1,5})?|\d{5,12}|[A-Z]{1,3}-?\d{4,12}(?:-[A-Z0-9]{1,5})?)\s+/i);if(lead){sku=lead[1].toUpperCase();title=clean(title.slice(lead[0].length));}}
   const q=title.match(/^(\d{1,3})\s*[xX*]\s+(.+)$/);if(q&&Number(q[1])<=99){qty=Number(q[1]);title=clean(q[2]);unitPrice=Math.round(price/qty*100)/100;}
   if(!title&&lines[i+1]&&!/\d+\.\d{2}\s*$/.test(lines[i+1])&&!totals.test(lines[i+1]))title=lines[++i];
   if(title.length<2)title=sku?'Product '+sku:'Unidentified purchased item';
