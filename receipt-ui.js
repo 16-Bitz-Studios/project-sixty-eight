@@ -5,6 +5,28 @@ const app=()=>globalThis.PS68_BRIDGE, $=id=>document.getElementById(id);
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const n=v=>Number(v)||0,fmt=v=>app().money(Number(v)||0);
 let draft=null,file=null,run=0,worker=null,busy=false;
+const isHEIC=f=>/\.(?:heic|heif)$/i.test(f?.name||'')||/^image\/(?:heic|heif|heic-sequence|heif-sequence)$/i.test(f?.type||'');
+let heicLoader=null;
+async function loadHeicConverter(){
+ if(typeof globalThis.heic2any==='function')return globalThis.heic2any;
+ if(!heicLoader)heicLoader=new Promise((resolve,reject)=>{
+  const script=document.createElement('script');
+  script.src='https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js';
+  script.async=true;script.onload=()=>typeof globalThis.heic2any==='function'?resolve(globalThis.heic2any):reject(Error('HEIC decoder did not initialize'));
+  script.onerror=()=>reject(Error('Could not load the HEIC decoder. Connect to the internet and retry.'));
+  document.head.appendChild(script);
+ }).catch(e=>{heicLoader=null;throw e});
+ return heicLoader;
+}
+async function readableImage(f){
+ if(!isHEIC(f))return f;
+ status('Converting HEIC/HEIF to JPEG locally on this device…');
+ const convert=await loadHeicConverter();
+ let blob=await convert({blob:f,toType:'image/jpeg',quality:0.9});
+ if(Array.isArray(blob))blob=blob[0];
+ if(!(blob instanceof Blob)||!blob.size)throw Error('HEIC decoder did not return a usable image.');
+ return new File([blob],String(f.name||'receipt').replace(/\.(?:heic|heif)$/i,'')+'.jpg',{type:'image/jpeg',lastModified:f.lastModified||Date.now()});
+}
 function enhanceCanvas(canvas){const ctx=canvas.getContext('2d',{willReadFrequently:true}),img=ctx.getImageData(0,0,canvas.width,canvas.height),v=img.data;for(let i=0;i<v.length;i+=4){const gray=.299*v[i]+.587*v[i+1]+.114*v[i+2],bright=Math.max(0,Math.min(255,(gray-100)*1.65+120));v[i]=v[i+1]=v[i+2]=bright;}ctx.putImageData(img,0,0);return canvas;}
 async function enhancedImage(file){const bitmap=await createImageBitmap(file),canvas=document.createElement('canvas'),scale=Math.min(2.3,2200/Math.max(bitmap.width,bitmap.height));canvas.width=Math.max(1,Math.round(bitmap.width*scale));canvas.height=Math.max(1,Math.round(bitmap.height*scale));canvas.getContext('2d').drawImage(bitmap,0,0,canvas.width,canvas.height);bitmap.close();return enhanceCanvas(canvas);}
 function row(x={}){return {description:String(x.description||''),sku:String(x.sku||''),qty:Number(x.qty)||1,lineTotal:Number(x.lineTotal)||0,category:app().cats.includes(x.category)?x.category:'General',selected:x.selected!==false,lookupUrl:String(x.lookupUrl||''),lookupNote:String(x.lookupNote||''),partId:String(x.partId||'')};}
@@ -56,7 +78,7 @@ function open(id){
  if(busy)return;stop();const prior=app().data.receipts.find(x=>x.id===id);draft=prior?JSON.parse(JSON.stringify(prior)):{id:app().uid(),merchant:'',date:app().dateNow(),currency:'CAD',fxRate:1,subtotal:'',tax:'',total:'',totalCAD:'',lines:[],raw:'',sourceData:'',filename:''};file=null;
  $('receiptheading').textContent=prior?'Edit receipt':'Scan receipt or invoice';
  $('receiptfields').innerHTML='<div class="receipt-form"><p class="muted">Photograph a receipt or import an email invoice PDF. Text recognition is local. Confirm the merchant, product names, quantities, prices, tax and final total before saving.</p>'+
- '<div class="pair"><label>Take photo<input id="receiptcamera" type="file" accept="image/*" capture="environment"></label><label>Choose image or PDF<input id="receiptfile" type="file" accept="image/*,application/pdf,.pdf"></label></div>'+
+ '<div class="pair"><label>Take photo<input id="receiptcamera" type="file" accept="image/*" capture="environment"></label><label>Choose image or PDF<input id="receiptfile" type="file" accept="image/*,.heic,.heif,application/pdf,.pdf"></label></div>'+
  '<p id="receiptfilename" class="muted">'+esc(draft.filename||'No document selected')+'</p><label class="check"><input type="checkbox" id="receiptenhance" checked> Enhance dark / low-contrast receipt photos for text reading</label><div class="actions"><button type="button" class="btn primary" id="receiptocr">Read receipt</button><button class="btn small danger" type="button" id="receiptstop" hidden>Stop OCR</button></div>'+
  '<p class="muted" id="receiptstatus" role="status">Select a document, or paste invoice text below.</p>'+
  '<details><summary>Paste / correct receipt text</summary><textarea rows="6" id="receiptraw" placeholder="Canadian Tire&#10;2026-11-23&#10;1234567 SANDING DISCS 29.99&#10;TOTAL 33.59">'+esc(draft.raw||'')+'</textarea><button type="button" class="btn small" id="receiptparse">Extract lines from text</button></details>'+
@@ -73,7 +95,7 @@ function open(id){
  $('receiptdialog').oncancel=e=>{if(busy){e.preventDefault();stop();status('OCR stopped. Close again to exit.')}};
  $('receiptdialog').showModal();$('receiptheading').focus({preventScroll:true});editRows();
 }
-function pick(e){const f=e.target.files?.[0];if(!f)return;if(f.size>10000000){status('Receipt must be under 10 MB. Try a smaller photo or PDF.');e.target.value='';return;}if(draft.lines.some(x=>x.partId)){status('This receipt has items linked to Inventory. Keep the original invoice or delete the receipt before importing a different one.');e.target.value='';return;}if(draft.lines.length&&!confirm('Replace reviewed lines with a new receipt?')){e.target.value='';return;}file=f;draft.sourceData='';draft.filename=f.name;$('receiptfilename').textContent=f.name;status('File ready. Tap Read receipt.');}
+function pick(e){const f=e.target.files?.[0];if(!f)return;if(f.size>15000000){status('Receipt must be under 15 MB. Try a smaller photo or PDF.');e.target.value='';return;}if(draft.lines.some(x=>x.partId)){status('This receipt has items linked to Inventory. Keep the original invoice or delete the receipt before importing a different one.');e.target.value='';return;}if(draft.lines.length&&!confirm('Replace reviewed lines with a new receipt?')){e.target.value='';return;}file=f;draft.sourceData='';draft.filename=f.name;$('receiptfilename').textContent=f.name;status(isHEIC(f)?'HEIC image selected. Tap Read receipt to convert it locally and scan.':'File ready. Tap Read receipt.');}
 function parseText(text){const result=ReceiptImport.parse(text);draft.lines=result.lines.map(row);draft.raw=result.raw;draft.merchant=result.merchant;draft.date=result.date||draft.date;if(result.subtotal!==null)draft.subtotal=result.subtotal;if(result.tax!==null)draft.tax=result.tax;if(result.total!==null)draft.total=result.total;
  $('receiptraw').value=draft.raw;$('rmerchant').value=draft.merchant;$('rdate').value=draft.date;$('rsubtotal').value=draft.subtotal??'';$('rtax').value=draft.tax??'';$('rtotal').value=draft.total??'';editRows();status(result.lines.length+' item candidates found. '+result.warnings.join(' ')+' Verify all prices before saving.');}
 async function recognize(){
@@ -89,9 +111,9 @@ async function recognize(){
       }chunks.push(text);}finally{page.cleanup();}
     }raw=chunks.join('\n');}finally{if(task)await task.destroy().catch(()=>{})}
    source=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(String(r.result||'').replace(/^data:[^;]*;base64,/,'data:application/pdf;base64,'));r.onerror=()=>reject(Error('PDF attachment unavailable'));r.readAsDataURL(f)});
-  }else{const input=$('receiptenhance')?.checked?await enhancedImage(f):f;raw=await DiagramImporter.recognize(input,m=>{if(token===run)status(m)},w=>{worker=w});if(input!==f){input.width=input.height=1;}source=await app().compressPhoto(f);}
+  }else{const readable=await readableImage(f);if(token!==run)return;const enhanced=$('receiptenhance')?.checked;const input=enhanced?await enhancedImage(readable):readable;if(token!==run){if(enhanced){input.width=input.height=1;}return;}raw=await DiagramImporter.recognize(enhanced?input.toDataURL('image/png'):input,m=>{if(token===run)status(m)},w=>{worker=w});if(enhanced){input.width=input.height=1;}source=await app().compressPhoto(readable);if(isHEIC(f))draft.filename=readable.name;}
   if(token!==run)return;draft.sourceData=source;parseText(raw);status('Receipt read. Verify every item and the final total before saving.');
- }catch(e){if(token===run)status('Could not read: '+(e.message||e)+'. You can paste invoice text or enter rows manually.');}
+ }catch(e){if(token===run)status((isHEIC(f)?'HEIC conversion / scanning failed: ':'Could not read receipt: ')+(e.message||e)+'. Try a JPG/PNG copy, a screenshot, or paste the invoice text.');}
  finally{if(token===run){worker=null;setBusy(false)}}
 }
 async function lookupLine(i){const l=draft.lines[i];if(!l?.sku)return status('Enter a product number first.');const sku=l.sku,merchant=$('rmerchant').value;status('Looking up '+sku+'…');try{const r=await ReceiptImport.lookup(sku,merchant);if(draft.lines[i]!==l||l.sku!==sku)return;if(confirm('Suggested product description:\n'+r.description+'\n\nUse this description? You should confirm it matches your purchase.')){l.description=r.description;l.category=ReceiptImport.category(r.description);l.lookupUrl=r.url;l.lookupNote=r.note;editRows()}status('Product lookup completed. Paid price unchanged.');}catch(e){status('Store lookup unavailable. Use Search store to find the description and edit it manually.');}}
