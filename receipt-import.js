@@ -15,7 +15,7 @@ function parse(text){
   if(price!==null&&/^(?:sub ?total)\b/i.test(line)){subtotal=price;continue;}
   if(price!==null&&/^(?:gst|hst|pst|qst|tax)\b/i.test(line)){tax=Math.round(((tax||0)+price)*100)/100;continue;}
   if(pastTotal||totals.test(line)||noise.test(line)||!ending||price===null||price<=0)continue;
-  let title=clean(line.slice(0,ending.index));if(title.length<3||totals.test(title)||noise.test(title))continue;
+  let title=clean(line.slice(0,ending.index));if(!title&&i>=2){const before=lines[i-1],before2=lines[i-2];if(before&&before2&&!totals.test(before)&&!totals.test(before2)&&!noise.test(before)&&!noise.test(before2)&&!/\d+\.\d{2}\s*$/.test(before)&&/\b[A-Za-z]{3,}\b/.test(before)){title=clean(before2+' '+before);}}if(title.length<3||totals.test(title)||noise.test(title))continue;
   let sku='',qty=1,unitPrice=price;
   const named=title.match(/\b(?:SKU|ITEM(?: NO| #)?|PART(?: NO| #)?|ASIN|UPC)\s*[:#-]?\s*([A-Z0-9][A-Z0-9./-]{3,24})\b/i);
   if(named){sku=named[1].toUpperCase();title=clean(title.replace(named[0],''));}
