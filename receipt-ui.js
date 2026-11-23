@@ -5,6 +5,8 @@ const app=()=>globalThis.PS68_BRIDGE, $=id=>document.getElementById(id);
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const n=v=>Number(v)||0,fmt=v=>app().money(Number(v)||0);
 let draft=null,file=null,run=0,worker=null,busy=false;
+function enhanceCanvas(canvas){const ctx=canvas.getContext('2d',{willReadFrequently:true}),img=ctx.getImageData(0,0,canvas.width,canvas.height),v=img.data;for(let i=0;i<v.length;i+=4){const gray=.299*v[i]+.587*v[i+1]+.114*v[i+2],bright=Math.max(0,Math.min(255,(gray-100)*1.65+120));v[i]=v[i+1]=v[i+2]=bright;}ctx.putImageData(img,0,0);return canvas;}
+async function enhancedImage(file){const bitmap=await createImageBitmap(file),canvas=document.createElement('canvas'),scale=Math.min(2.3,2200/Math.max(bitmap.width,bitmap.height));canvas.width=Math.max(1,Math.round(bitmap.width*scale));canvas.height=Math.max(1,Math.round(bitmap.height*scale));canvas.getContext('2d').drawImage(bitmap,0,0,canvas.width,canvas.height);bitmap.close();return enhanceCanvas(canvas);}
 function row(x={}){return {description:String(x.description||''),sku:String(x.sku||''),qty:Number(x.qty)||1,lineTotal:Number(x.lineTotal)||0,category:app().cats.includes(x.category)?x.category:'General',selected:x.selected!==false,lookupUrl:String(x.lookupUrl||''),lookupNote:String(x.lookupNote||''),partId:String(x.partId||'')};}
 function view(){const list=[...(app().data.receipts||[])].sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
  return '<div class="topline"><div><h2>Receipts & invoices</h2><p class="muted">Scan store receipts and online invoices. Record purchased materials and actual spending.</p></div><button class="btn primary" data-action="receiptnew-receipt">+ Scan receipt</button></div>'+
@@ -55,7 +57,7 @@ function open(id){
  $('receiptheading').textContent=prior?'Edit receipt':'Scan receipt or invoice';
  $('receiptfields').innerHTML='<div class="receipt-form"><p class="muted">Photograph a receipt or import an email invoice PDF. Text recognition is local. Confirm the merchant, product names, quantities, prices, tax and final total before saving.</p>'+
  '<div class="pair"><label>Take photo<input id="receiptcamera" type="file" accept="image/*" capture="environment"></label><label>Choose image or PDF<input id="receiptfile" type="file" accept="image/*,application/pdf,.pdf"></label></div>'+
- '<p id="receiptfilename" class="muted">'+esc(draft.filename||'No document selected')+'</p><div class="actions"><button type="button" class="btn primary" id="receiptocr">Read receipt</button><button class="btn small danger" type="button" id="receiptstop" hidden>Stop OCR</button></div>'+
+ '<p id="receiptfilename" class="muted">'+esc(draft.filename||'No document selected')+'</p><label class="check"><input type="checkbox" id="receiptenhance" checked> Enhance dark / low-contrast receipt photos for text reading</label><div class="actions"><button type="button" class="btn primary" id="receiptocr">Read receipt</button><button class="btn small danger" type="button" id="receiptstop" hidden>Stop OCR</button></div>'+
  '<p class="muted" id="receiptstatus" role="status">Select a document, or paste invoice text below.</p>'+
  '<details><summary>Paste / correct receipt text</summary><textarea rows="6" id="receiptraw" placeholder="Canadian Tire&#10;2026-11-23&#10;1234567 SANDING DISCS 29.99&#10;TOTAL 33.59">'+esc(draft.raw||'')+'</textarea><button type="button" class="btn small" id="receiptparse">Extract lines from text</button></details>'+
  '<div class="pair"><label>Merchant<input id="rmerchant" maxlength="120" value="'+esc(draft.merchant)+'"></label><label>Purchase date<input type="date" id="rdate" value="'+esc(draft.date)+'"></label></div>'+
@@ -83,11 +85,11 @@ async function recognize(){
       try{let text=PdfCatalog.linesFromItems((await page.getTextContent()).items);if(text.trim().length<40){
         const v=page.getViewport({scale:2}),canvas=document.createElement('canvas');canvas.width=Math.ceil(v.width);canvas.height=Math.ceil(v.height);
         await page.render({canvas,canvasContext:canvas.getContext('2d'),viewport:v,background:'white'}).promise;
-        text=await DiagramImporter.recognize(canvas.toDataURL('image/png'),m=>{if(token===run)status('Page '+pageNum+': '+m)},w=>{worker=w});canvas.width=canvas.height=1;
+        text=await DiagramImporter.recognize($('receiptenhance')?.checked?enhanceCanvas(canvas):canvas,m=>{if(token===run)status('Page '+pageNum+': '+m)},w=>{worker=w});canvas.width=canvas.height=1;
       }chunks.push(text);}finally{page.cleanup();}
     }raw=chunks.join('\n');}finally{if(task)await task.destroy().catch(()=>{})}
    source=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(String(r.result||'').replace(/^data:[^;]*;base64,/,'data:application/pdf;base64,'));r.onerror=()=>reject(Error('PDF attachment unavailable'));r.readAsDataURL(f)});
-  }else{raw=await DiagramImporter.recognize(f,m=>{if(token===run)status(m)},w=>{worker=w});source=await app().compressPhoto(f);}
+  }else{const input=$('receiptenhance')?.checked?await enhancedImage(f):f;raw=await DiagramImporter.recognize(input,m=>{if(token===run)status(m)},w=>{worker=w});if(input!==f){input.width=input.height=1;}source=await app().compressPhoto(f);}
   if(token!==run)return;draft.sourceData=source;parseText(raw);status('Receipt read. Verify every item and the final total before saving.');
  }catch(e){if(token===run)status('Could not read: '+(e.message||e)+'. You can paste invoice text or enter rows manually.');}
  finally{if(token===run){worker=null;setBusy(false)}}
