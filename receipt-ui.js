@@ -113,7 +113,7 @@ async function ocrReceiptPhoto(readable,token){
   push('original receipt columns',next);
   best=attempts.reduce((a,b)=>b.score>a.score?b:a);
  }
- if(best.rows===0||!ReceiptImport.parse(best.raw).lines.some(l=>l.sku)){
+ if((best.rows===0||!ReceiptImport.parse(best.raw).lines.some(l=>l.sku))&&$('receiptenhance')?.checked){
   status('Trying enhanced monochrome image to recover item numbers…');
   const canvas=await enhancedImage(readable);
   thresholdCanvas(canvas);
@@ -124,7 +124,7 @@ async function ocrReceiptPhoto(readable,token){
   }finally{canvas.width=canvas.height=1;}
  }
  best=attempts.reduce((a,b)=>b.score>a.score?b:a);
- if(token===run)status('Selected '+best.label+' OCR with '+best.rows+' detected purchase rows. Review the scan.');
+ if(token===run)status('Selected '+best.label+' OCR with '+best.rows+' detected purchase rows. '+(best.rows?'Review the scan.':'No reliable line items found. Try better lighting, a flatter receipt, or enter items manually.'));
  return best.raw;
 }
 function parseText(text){const result=ReceiptImport.parse(text);draft.lines=result.lines.map(row);draft.raw=result.raw;draft.merchant=result.merchant;draft.date=result.date||draft.date;if(result.subtotal!==null)draft.subtotal=result.subtotal;if(result.tax!==null)draft.tax=result.tax;if(result.total!==null)draft.total=result.total;
