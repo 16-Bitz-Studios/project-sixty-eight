@@ -96,7 +96,37 @@ function open(id){
  $('receiptdialog').showModal();$('receiptheading').focus({preventScroll:true});editRows();
 }
 function pick(e){const f=e.target.files?.[0];if(!f)return;if(f.size>15000000){status('Receipt must be under 15 MB. Try a smaller photo or PDF.');e.target.value='';return;}if(draft.lines.some(x=>x.partId)){status('This receipt has items linked to Inventory. Keep the original invoice or delete the receipt before importing a different one.');e.target.value='';return;}if(draft.lines.length&&!confirm('Replace reviewed lines with a new receipt?')){e.target.value='';return;}file=f;draft.sourceData='';draft.filename=f.name;$('receiptfilename').textContent=f.name;status(isHEIC(f)?'HEIC image selected. Tap Read receipt to convert it locally and scan.':'File ready. Tap Read receipt.');}
-function ocrScore(text){const r=ReceiptImport.parse(text);return r.lines.reduce((sum,l)=>sum+(l.sku?9:3),0)+(r.subtotal!==null?5:0)+(r.total!==null?7:0)+(r.tax!==null?2:0)-r.warnings.length*2;}
+function ocrScore(text){const r=ReceiptImport.parse(text);const items=r.lines.filter(l=>!/\b(?:gift card|payment|total|subtotal|gst|pst)\b/i.test(l.description));return items.reduce((sum,l)=>sum+(l.sku?12:5),0)+(r.subtotal!==null?4:0)+(r.total!==null?6:0)+(r.tax!==null?2:0)-r.warnings.length*3;}
+function thresholdCanvas(canvas){const ctx=canvas.getContext('2d',{willReadFrequently:true}),image=ctx.getImageData(0,0,canvas.width,canvas.height),p=image.data;let dark=0,light=0;for(let i=0;i<p.length;i+=4){const v=.299*p[i]+.587*p[i+1]+.114*p[i+2];dark+=v;light++;}const mean=dark/Math.max(light,1),cutoff=Math.min(205,Math.max(130,mean*.91));for(let i=0;i<p.length;i+=4){const gray=.299*p[i]+.587*p[i+1]+.114*p[i+2];const b=gray>cutoff?255:0;p[i]=p[i+1]=p[i+2]=b;}ctx.putImageData(image,0,0);return canvas;}
+async function ocrReceiptPhoto(readable,token){
+ // Receipts are long narrow documents. General OCR PSM 6 often reads just
+ // the totals. PSM 11 recognizes sparse rows and PSM 4 respects columns.
+ const attempts=[];const push=(label,raw)=>{const score=ocrScore(raw);attempts.push({label,raw,score,rows:ReceiptImport.parse(raw).lines.length});};
+ const original=await DiagramImporter.recognize(readable,m=>{if(token===run)status('First pass (original): '+m)},w=>{worker=w},false,11);
+ if(token!==run)return '';
+ push('original sparse text',original);
+ let best=attempts[0];
+ if(best.rows===0||!ReceiptImport.parse(best.raw).lines.some(l=>l.sku)){
+  status('Trying receipt column layout…');
+  const next=await DiagramImporter.recognize(readable,m=>{if(token===run)status('Second pass (receipt rows): '+m)},w=>{worker=w},false,4);
+  if(token!==run)return '';
+  push('original receipt columns',next);
+  best=attempts.reduce((a,b)=>b.score>a.score?b:a);
+ }
+ if(best.rows===0||!ReceiptImport.parse(best.raw).lines.some(l=>l.sku)){
+  status('Trying enhanced monochrome image to recover item numbers…');
+  const canvas=await enhancedImage(readable);
+  thresholdCanvas(canvas);
+  try{
+   const next=await DiagramImporter.recognize(canvas.toDataURL('image/png'),m=>{if(token===run)status('Third pass (high contrast): '+m)},w=>{worker=w},false,6);
+   if(token!==run)return '';
+   push('high contrast',next);
+  }finally{canvas.width=canvas.height=1;}
+ }
+ best=attempts.reduce((a,b)=>b.score>a.score?b:a);
+ if(token===run)status('Selected '+best.label+' OCR with '+best.rows+' detected purchase rows. Review the scan.');
+ return best.raw;
+}
 function parseText(text){const result=ReceiptImport.parse(text);draft.lines=result.lines.map(row);draft.raw=result.raw;draft.merchant=result.merchant;draft.date=result.date||draft.date;if(result.subtotal!==null)draft.subtotal=result.subtotal;if(result.tax!==null)draft.tax=result.tax;if(result.total!==null)draft.total=result.total;
  $('receiptraw').value=draft.raw;$('rmerchant').value=draft.merchant;$('rdate').value=draft.date;$('rsubtotal').value=draft.subtotal??'';$('rtax').value=draft.tax??'';$('rtotal').value=draft.total??'';editRows();status(result.lines.length+' item candidates found. '+(result.warnings.length?result.warnings.join(' ')+' ':'')+'Check the original receipt before saving.');}
 async function recognize(){
@@ -112,15 +142,11 @@ async function recognize(){
       }chunks.push(text);}finally{page.cleanup();}
     }raw=chunks.join('\n');}finally{if(task)await task.destroy().catch(()=>{})}
    source=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(String(r.result||'').replace(/^data:[^;]*;base64,/,'data:application/pdf;base64,'));r.onerror=()=>reject(Error('PDF attachment unavailable'));r.readAsDataURL(f)});
-  }else{const readable=await readableImage(f);if(token!==run)return;const enhanced=$('receiptenhance')?.checked;const input=enhanced?await enhancedImage(readable):readable;if(token!==run){if(enhanced){input.width=input.height=1;}return;}raw=await DiagramImporter.recognize(enhanced?input.toDataURL('image/png'):input,m=>{if(token===run)status(m)},w=>{worker=w});if(enhanced){input.width=input.height=1;}
+  }else{const readable=await readableImage(f);if(token!==run)return;
+    raw=await ocrReceiptPhoto(readable,token);
     if(token!==run)return;
-    const first=ReceiptImport.parse(raw);
-    if(enhanced&&(first.lines.length===0||first.total===null||!first.lines.some(l=>l.sku))){
-      status('First OCR pass missed details. Trying the original image without contrast enhancement…');
-      try{const alternate=await DiagramImporter.recognize(readable,m=>{if(token===run)status('Original-image pass: '+m)},w=>{worker=w});
-      if(token!==run)return;if(ocrScore(alternate)>ocrScore(raw))raw=alternate;}catch(e){if(token!==run)return;}
-    }
-    source=await app().compressPhoto(readable);if(isHEIC(f)){draft.filename=readable.name;if($('receiptfilename'))$('receiptfilename').textContent=f.name+' → '+readable.name+' (converted locally)';}}
+    source=await app().compressPhoto(readable);
+    if(isHEIC(f)){draft.filename=readable.name;if($('receiptfilename'))$('receiptfilename').textContent=f.name+' → '+readable.name+' (converted locally)';}}
   if(token!==run)return;draft.sourceData=source;parseText(raw);if(ReceiptImport.parse(raw).warnings.length===0)status('Receipt read. Verify every item and the final total before saving.');
  }catch(e){if(token===run)status((isHEIC(f)?'HEIC conversion / scanning failed: ':'Could not read receipt: ')+(e.message||e)+'. Try a JPG/PNG copy, a screenshot, or paste the invoice text.');}
  finally{if(token===run){worker=null;setBusy(false)}}
