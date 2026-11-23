@@ -50,7 +50,7 @@ function receiptCard(r){
 function stop(){run++;if(worker)worker.terminate().catch(()=>{});worker=null;busy=false;setBusy(false);}
 function status(v){if($('receiptstatus'))$('receiptstatus').textContent=v;}
 function summary(){
- if(!$('receiptcount'))return;const selected=draft.lines.filter(l=>l.selected),items=selected.reduce((sum,l)=>sum+n(l.lineTotal),0),total=Number($('rtotal').value),currency=$('rcurrency').value,rate=Number($('rrate').value),cad=currency==='CAD'?total:total*rate;
+ if(!$('receiptcount'))return;const selected=draft.lines.filter(l=>l.selected),items=selected.reduce((sum,l)=>sum+n(l.lineTotal),0),total=$('rtotal').value.trim()===''?NaN:Number($('rtotal').value),currency=$('rcurrency').value,rate=Number($('rrate').value),cad=currency==='CAD'?total:total*rate;
  $('receiptcount').textContent=selected.length+' selected · Items subtotal '+items.toFixed(2)+' '+currency+' · Invoice '+(Number.isFinite(total)?total.toFixed(2):'?')+' '+currency+(Number.isFinite(cad)&&cad>0?' ≈ '+fmt(cad)+' CAD':' · CAD rate required');
  $('receiptsave').disabled=busy||!Number.isFinite(total)||total<=0||(currency!=='CAD'&&!(rate>0))||!selected.some(l=>l.description.trim());
 }
@@ -96,8 +96,9 @@ function open(id){
  $('receiptdialog').showModal();$('receiptheading').focus({preventScroll:true});editRows();
 }
 function pick(e){const f=e.target.files?.[0];if(!f)return;if(f.size>15000000){status('Receipt must be under 15 MB. Try a smaller photo or PDF.');e.target.value='';return;}if(draft.lines.some(x=>x.partId)){status('This receipt has items linked to Inventory. Keep the original invoice or delete the receipt before importing a different one.');e.target.value='';return;}if(draft.lines.length&&!confirm('Replace reviewed lines with a new receipt?')){e.target.value='';return;}file=f;draft.sourceData='';draft.filename=f.name;$('receiptfilename').textContent=f.name;status(isHEIC(f)?'HEIC image selected. Tap Read receipt to convert it locally and scan.':'File ready. Tap Read receipt.');}
+function ocrScore(text){const r=ReceiptImport.parse(text);return r.lines.reduce((sum,l)=>sum+(l.sku?9:3),0)+(r.subtotal!==null?5:0)+(r.total!==null?7:0)+(r.tax!==null?2:0)-r.warnings.length*2;}
 function parseText(text){const result=ReceiptImport.parse(text);draft.lines=result.lines.map(row);draft.raw=result.raw;draft.merchant=result.merchant;draft.date=result.date||draft.date;if(result.subtotal!==null)draft.subtotal=result.subtotal;if(result.tax!==null)draft.tax=result.tax;if(result.total!==null)draft.total=result.total;
- $('receiptraw').value=draft.raw;$('rmerchant').value=draft.merchant;$('rdate').value=draft.date;$('rsubtotal').value=draft.subtotal??'';$('rtax').value=draft.tax??'';$('rtotal').value=draft.total??'';editRows();status(result.lines.length+' item candidates found. '+result.warnings.join(' ')+' Verify all prices before saving.');}
+ $('receiptraw').value=draft.raw;$('rmerchant').value=draft.merchant;$('rdate').value=draft.date;$('rsubtotal').value=draft.subtotal??'';$('rtax').value=draft.tax??'';$('rtotal').value=draft.total??'';editRows();status(result.lines.length+' item candidates found. '+(result.warnings.length?result.warnings.join(' ')+' ':'')+'Check the original receipt before saving.');}
 async function recognize(){
  const f=file;if(!f)return status('Choose a photo or PDF first.');const token=++run;setBusy(true);status('Reading document locally…');
  try{let raw='',source='';
@@ -111,8 +112,16 @@ async function recognize(){
       }chunks.push(text);}finally{page.cleanup();}
     }raw=chunks.join('\n');}finally{if(task)await task.destroy().catch(()=>{})}
    source=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(String(r.result||'').replace(/^data:[^;]*;base64,/,'data:application/pdf;base64,'));r.onerror=()=>reject(Error('PDF attachment unavailable'));r.readAsDataURL(f)});
-  }else{const readable=await readableImage(f);if(token!==run)return;const enhanced=$('receiptenhance')?.checked;const input=enhanced?await enhancedImage(readable):readable;if(token!==run){if(enhanced){input.width=input.height=1;}return;}raw=await DiagramImporter.recognize(enhanced?input.toDataURL('image/png'):input,m=>{if(token===run)status(m)},w=>{worker=w});if(enhanced){input.width=input.height=1;}source=await app().compressPhoto(readable);if(isHEIC(f)){draft.filename=readable.name;if($('receiptfilename'))$('receiptfilename').textContent=f.name+' → '+readable.name+' (converted locally)';}}
-  if(token!==run)return;draft.sourceData=source;parseText(raw);status('Receipt read. Verify every item and the final total before saving.');
+  }else{const readable=await readableImage(f);if(token!==run)return;const enhanced=$('receiptenhance')?.checked;const input=enhanced?await enhancedImage(readable):readable;if(token!==run){if(enhanced){input.width=input.height=1;}return;}raw=await DiagramImporter.recognize(enhanced?input.toDataURL('image/png'):input,m=>{if(token===run)status(m)},w=>{worker=w});if(enhanced){input.width=input.height=1;}
+    if(token!==run)return;
+    const first=ReceiptImport.parse(raw);
+    if(enhanced&&(first.lines.length===0||first.total===null||!first.lines.some(l=>l.sku))){
+      status('First OCR pass missed details. Trying the original image without contrast enhancement…');
+      try{const alternate=await DiagramImporter.recognize(readable,m=>{if(token===run)status('Original-image pass: '+m)},w=>{worker=w});
+      if(token!==run)return;if(ocrScore(alternate)>ocrScore(raw))raw=alternate;}catch(e){if(token!==run)return;}
+    }
+    source=await app().compressPhoto(readable);if(isHEIC(f)){draft.filename=readable.name;if($('receiptfilename'))$('receiptfilename').textContent=f.name+' → '+readable.name+' (converted locally)';}}
+  if(token!==run)return;draft.sourceData=source;parseText(raw);if(ReceiptImport.parse(raw).warnings.length===0)status('Receipt read. Verify every item and the final total before saving.');
  }catch(e){if(token===run)status((isHEIC(f)?'HEIC conversion / scanning failed: ':'Could not read receipt: ')+(e.message||e)+'. Try a JPG/PNG copy, a screenshot, or paste the invoice text.');}
  finally{if(token===run){worker=null;setBusy(false)}}
 }
@@ -121,10 +130,10 @@ async function lookupAll(){const items=draft.lines.map((l,i)=>({l,i})).filter(x=
 async function fx(){const c=$('rcurrency').value;if(c==='CAD'){$('rrate').value=1;summary();return;}status('Requesting Bank of Canada rate…');try{const r=await LmcPricing.fx(c);$('rrate').value=r.rate;summary();status('Reference exchange rate from '+r.date+'. Use your bank statement if the actual charge differs.');}catch(e){status('Daily rate unavailable. Enter the actual CAD conversion manually.');}}
 async function save(){
  if(busy)return;const r=draft,merchant=$('rmerchant').value.trim(),date=$('rdate').value,currency=$('rcurrency').value,total=Number($('rtotal').value),rate=currency==='CAD'?1:Number($('rrate').value);
- if(!merchant||!date||!Number.isFinite(total)||total<=0||!Number.isFinite(rate)||rate<=0)return status('Merchant, date, final amount and CAD rate are required.');
+ if(!merchant||!date||$('rtotal').value.trim()===''||!Number.isFinite(total)||total<=0||!Number.isFinite(rate)||rate<=0)return status('Merchant, date, final amount and CAD rate are required.');
  const lines=r.lines.filter(l=>l.selected).map(row);if(!lines.length||lines.some(l=>!l.description.trim()||!Number.isInteger(l.qty)||l.qty<1||l.qty>999||!Number.isFinite(l.lineTotal)||l.lineTotal<0))return status('Check the selected item descriptions, quantities and prices.');
  const previous=app().data.receipts.find(x=>x.id===r.id);if(previous&&previous.lines.some(x=>x.partId&&!lines.some(y=>y.partId===x.partId)))return status('Do not deselect a line linked to Inventory. It must remain on this receipt.');
- if(lines.reduce((sum,l)=>sum+l.lineTotal,0)>total+.05&&!confirm('Item prices exceed the invoice total. Is there a discount or refund? Save anyway?'))return;
+ if(lines.some(l=>/^(?:6ST|G[S5]T|P[S5]T|T[O0]TA[L1I]?|GIRL CARD|GIFT CARD|SUBTOTA[L1I]?|AMOUNT DUE|PAYMENT|CHANGE)\b/i.test(l.description)))return status('A tax, total, or payment line is still selected as a purchased item. Remove it from the item list first.');if(lines.reduce((sum,l)=>sum+l.lineTotal,0)>total+.05&&!confirm('Item prices exceed the invoice total. Is there a discount or refund? Save anyway?'))return;
  const record={...r,merchant,date,currency,total,fxRate:rate,totalCAD:Math.round(total*rate*100)/100,subtotal:$('rsubtotal').value===''?'':Number($('rsubtotal').value),tax:$('rtax').value===''?'':Number($('rtax').value),lines,raw:$('receiptraw').value.slice(0,100000)};
  if(!app().validReceipt(record))return status('Invalid receipt or too-large attachment. Try reducing the PDF/photo size.');
  const duplicate=app().data.receipts.find(x=>x.id!==record.id&&x.merchant.trim().toLowerCase()===record.merchant.trim().toLowerCase()&&x.date===record.date&&Math.abs(Number(x.totalCAD)-record.totalCAD)<0.01);if(duplicate&&!confirm('Another receipt from the same retailer, date and total is already saved. Recording this again may double-count the purchase. Continue anyway?'))return;
