@@ -7,15 +7,24 @@ const noise=/^(?:thank you|return|refund|survey|visit us|www\.|https?:|phone|tel
 function category(t){return /\b(?:paint|primer|clear coat|spray|sealer|sanding|sandpaper|sand ?discs?|abrasive|body filler|masking|polish|rags?|shop towels?|microfibre|microfiber|gloves?|degreaser|solvent|thinner|compound)\b/i.test(t)?'Paint & finishing':g.PartImporter.category(t);}
 function store(t){for(const [re,n] of [[/canadian\s*tire/i,'Canadian Tire'],[/amazon/i,'Amazon'],[/home\s*depot/i,'Home Depot'],[/princess\s*auto/i,'Princess Auto'],[/rock\s*auto/i,'RockAuto'],[/napa\s*auto/i,'NAPA'],[/lmc\s*truck/i,'LMC Truck'],[/walmart/i,'Walmart'],[/costco/i,'Costco']])if(re.test(t.slice(0,2000)))return n;return clean(t.split('\n').find(x=>x.trim().length>3)||'Unknown retailer').slice(0,120);}
 function date(t){const m=String(t).match(/\b(20\d\d)[-/](0?[1-9]|1[0-2])[-/](0?[1-9]|[12]\d|3[01])\b/);if(m)return m[1]+'-'+m[2].padStart(2,'0')+'-'+m[3].padStart(2,'0');const n=String(t).match(/\b(0?[1-9]|1[0-2])[-/](0?[1-9]|[12]\d|3[01])[-/](20\d\d)\b/);if(n)return n[3]+'-'+n[1].padStart(2,'0')+'-'+n[2].padStart(2,'0');return '';}
+function role(line){
+ const t=clean(line).replace(/^\W+/,'').toUpperCase();
+ if(/^(?:(?:GIFT|GIRL|G1FT|GIF|G\W*I\W*F\W*T)\s*(?:CARD|C[A4]RD)|CARD\s+(?:REDEEMED|BALANCE|PAYMENT)|VISA|MASTERCARD|MASTER\s*CARD|DEBIT|CHANGE|CASH|PAYMENT|TENDER|PAID)\b/.test(t))return 'payment';
+ if(/^(?:SUB\s*TOTAL|SUB\s*TOTA|SUBTOTAI?|SUBTOTA[L1I]?|S[U0]BTOTAL)\b/.test(t))return 'subtotal';
+ if(/^(?:G[S5]T|6ST|HST|P[S5]T|QST|TAX)(?:\b|\s*[0-9%])/.test(t))return 'tax';
+ if(/^(?:(?:GRAND|ORDER)\s+TOTAL|T\s*O\s*T\s*A\s*[L1I]?|T[O0]T[A4][L1I]?|AMOUNT\s+DUE|AMOUNT\s+PAID|BALANCE\s+DUE)(?:\b|\s*\d)/.test(t))return 'total';
+ if(totals.test(t)||noise.test(t))return 'other';
+ return '';
+}
 function parse(text){
- const raw=String(text||'').slice(0,100000),lines=raw.split(/\r?\n/).map(clean).filter(Boolean),found=[];let subtotal=null,tax=null,total=null,pastTotal=false,currency=/\b(?:USD|US\$)\b/i.test(raw)?'USD':'CAD';
+ const raw=String(text||'').slice(0,100000),lines=raw.split(/\r?\n/).map(clean).filter(Boolean),found=[];let subtotal=null,tax=null,total=null,pastTotal=false,uncertainTotal=false,currency=/\b(?:USD|US\$)\b/i.test(raw)?'USD':'CAD';
  for(let i=0;i<lines.length;i++){
-  const line=lines[i],ending=line.match(/(?:^|\s)\$?\s*(\d{1,7}(?:,\d{3})*\.\d{2})(?:\s*[A-Z])?$/),price=ending?cents(ending[1]):null;
-  if(price!==null&&/^(?:(?:grand |order )?total(?: due)?\b|t\s*o\s*t\s*a\s*l\b|amount due\b|amount paid\b)/i.test(line)){total=price;pastTotal=true;continue;}
-  if(price!==null&&/^(?:sub ?total)\b/i.test(line)){subtotal=price;continue;}
-  if(price!==null&&/^(?:gst|hst|pst|qst|tax)\b/i.test(line)){tax=Math.round(((tax||0)+price)*100)/100;continue;}
-  if(pastTotal||totals.test(line)||noise.test(line)||!ending||price===null||price<=0)continue;
-  let title=clean(line.slice(0,ending.index));if(!title&&i>=2){const before=lines[i-1],before2=lines[i-2];if(before&&before2&&!totals.test(before)&&!totals.test(before2)&&!noise.test(before)&&!noise.test(before2)&&!/\d+\.\d{2}\s*$/.test(before)&&/\b[A-Za-z]{3,}\b/.test(before)){title=clean(before2+' '+before);}}if(title.length<3||totals.test(title)||noise.test(title))continue;
+  const line=lines[i],kind=role(line),ending=line.match(/(?:^|\s)\$?\s*(\d{1,7}(?:,\d{3})*\.\d{2})(?:\s*[A-Z])?$/),price=ending?cents(ending[1]):null;
+  if(kind==='total'){pastTotal=true;if(price!==null){total=price;if(!/^\s*(?:(?:GRAND |ORDER )?TOTAL(?: DUE)?|AMOUNT DUE|AMOUNT PAID)\b/i.test(line))uncertainTotal=true;}else uncertainTotal=true;continue;}
+  if(kind==='subtotal'){pastTotal=true;if(price!==null)subtotal=price;continue;}
+  if(kind==='tax'){pastTotal=true;if(price!==null)tax=Math.round(((tax||0)+price)*100)/100;continue;}
+  if(kind==='payment'){pastTotal=true;continue;}if(pastTotal||kind||!ending||price===null||price<=0)continue;
+  let title=clean(line.slice(0,ending.index));if(!title&&i>=2){const before=lines[i-1],before2=lines[i-2];if(before&&before2&&!totals.test(before)&&!totals.test(before2)&&!noise.test(before)&&!noise.test(before2)&&!/\d+\.\d{2}\s*$/.test(before)&&/\b[A-Za-z]{3,}\b/.test(before)){title=clean(before2+' '+before);}}if(title.length<3||role(title))continue;
   let sku='',qty=1,unitPrice=price;
   const named=title.match(/\b(?:SKU|ITEM(?: NO| #)?|PART(?: NO| #)?|ASIN|UPC)\s*[:#-]?\s*([A-Z0-9][A-Z0-9./-]{3,24})\b/i);
   if(named){sku=named[1].toUpperCase();title=clean(title.replace(named[0],''));}
@@ -25,7 +34,15 @@ function parse(text){
   if(title.length<2)title=sku?'Product '+sku:'Unidentified purchased item';
   found.push({description:title.slice(0,200),sku,qty,unitPrice,lineTotal:price,category:category(title),raw:line.slice(0,350),selected:true,lookupUrl:'',lookupNote:''});
  }
- return {merchant:store(raw),date:date(raw),currency,subtotal,tax,total,lines:found.slice(0,120),raw,warnings:[...(total===null?['Receipt total was not recognized; enter it manually.']:[]),...(found.length===0?['No item lines were detected; enter them manually.']:[])]};
+ const expected=subtotal!==null&&tax!==null?Math.round((subtotal+tax)*100)/100:null;
+ const mismatch=expected!==null&&total!==null&&Math.abs(expected-total)>0.02;
+ if(mismatch||(uncertainTotal&&expected===null)){total=null;}
+ const warnings=[];
+ if(mismatch)warnings.push('OCR total disagrees with subtotal + taxes. Check the printed total; a digit may be wrong.');
+ if(total===null){warnings.push('Verify and enter the final paid amount from the original receipt.');if(expected!==null)warnings.push('Subtotal + recognized taxes suggest '+expected.toFixed(2)+' '+currency+' (not saved automatically).');}
+ if(found.length===0)warnings.push('No reliable purchased items detected. Review the photo and add the item manually if needed.');
+ if(subtotal!==null&&found.reduce((n,x)=>n+x.lineTotal,0)>subtotal+0.02)warnings.push('Line amounts exceed the printed subtotal. Review for misread payment lines.');
+ return {merchant:store(raw),date:date(raw),currency,subtotal,tax,total,suggestedTotal:total===null?expected:null,lines:found.slice(0,120),raw,warnings};
 }
 function searchUrl(merchant,sku){const s=encodeURIComponent(String(sku||''));if(/canadian tire/i.test(merchant))return 'https://www.canadiantire.ca/en/search-results.html?q='+s;if(/amazon/i.test(merchant))return 'https://www.amazon.ca/s?k='+s;if(/home depot/i.test(merchant))return 'https://www.homedepot.ca/search?q='+s;if(/princess auto/i.test(merchant))return 'https://www.princessauto.com/en/searchresults?Ntt='+s;if(/rockauto/i.test(merchant))return 'https://www.rockauto.com/en/partsearch/?partnum='+s;return 'https://www.google.com/search?q='+encodeURIComponent(String(merchant)+' '+sku);}
 async function lookup(sku,merchant){
