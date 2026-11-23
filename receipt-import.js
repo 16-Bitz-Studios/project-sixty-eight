@@ -16,8 +16,30 @@ function role(line){
  if(totals.test(t)||noise.test(t))return 'other';
  return '';
 }
+function reflowLines(lines){
+ // Sparse OCR often separates a thermal receipt's SKU, description and amount
+ // onto different lines; only combine adjacent entries before summary/tender rows.
+ const result=[],skuOnly=/^(?:\d{3}\s*-\s*\d{4}\s*-\s*\d|\d{2}\s*-\s*\d{4}(?:\s*-\s*[A-Z0-9]{1,5})?|\d{5,12})$/i;
+ const cashOnly=/^\$?\s*\d{1,7}(?:,\d{3})*\.\d{2}\s*[A-Z]?$/;
+ for(let i=0;i<lines.length;i++){
+  const curr=lines[i],next=lines[i+1],third=lines[i+2];
+  if(role(curr)||!next){result.push(curr);continue;}
+  if(skuOnly.test(curr)&&next&&!role(next)&&!cashOnly.test(next)&&third&&cashOnly.test(third)){
+   result.push(curr.replace(/\s*-\s*/g,'-')+' '+next+' '+third);i+=2;continue;
+  }
+  if(skuOnly.test(curr)&&next&&!role(next)&&/\d+\.\d{2}\s*$/.test(next)){
+   result.push(curr.replace(/\s*-\s*/g,'-')+' '+next);i++;continue;
+  }
+  if(!cashOnly.test(curr)&&!/(\d+\.\d{2})\s*$/.test(curr)&&next&&cashOnly.test(next)&&
+      (/^\d{3}-\d{4}-\d\b/.test(curr)||/\b[A-Z]{3,}/i.test(curr))&&curr.length>6){
+   result.push(curr+' '+next);i++;continue;
+  }
+  result.push(curr);
+ }
+ return result;
+}
 function parse(text){
- const raw=String(text||'').slice(0,100000),lines=raw.split(/\r?\n/).map(clean).filter(Boolean),found=[];let subtotal=null,tax=null,total=null,pastTotal=false,uncertainTotal=false,currency=/\b(?:USD|US\$)\b/i.test(raw)?'USD':'CAD';
+ const raw=String(text||'').slice(0,100000),lines=reflowLines(raw.split(/\r?\n/).map(clean).filter(Boolean)),found=[];let subtotal=null,tax=null,total=null,pastTotal=false,uncertainTotal=false,currency=/\b(?:USD|US\$)\b/i.test(raw)?'USD':'CAD';
  for(let i=0;i<lines.length;i++){
   const line=lines[i],kind=role(line),ending=line.match(/(?:^|\s)\$?\s*(\d{1,7}(?:,\d{3})*\.\d{2})(?:\s*[A-Z])?$/),price=ending?cents(ending[1]):null;
   if(kind==='total'){pastTotal=true;if(price!==null){total=price;if(!/^\s*(?:(?:GRAND |ORDER )?TOTAL(?: DUE)?|AMOUNT DUE|AMOUNT PAID)\b/i.test(line))uncertainTotal=true;}else uncertainTotal=true;continue;}
