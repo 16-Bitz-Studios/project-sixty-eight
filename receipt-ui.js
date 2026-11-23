@@ -103,6 +103,7 @@ async function save(){
  if(lines.reduce((sum,l)=>sum+l.lineTotal,0)>total+.05&&!confirm('Item prices exceed the invoice total. Is there a discount or refund? Save anyway?'))return;
  const record={...r,merchant,date,currency,total,fxRate:rate,totalCAD:Math.round(total*rate*100)/100,subtotal:$('rsubtotal').value===''?'':Number($('rsubtotal').value),tax:$('rtax').value===''?'':Number($('rtax').value),lines,raw:$('receiptraw').value.slice(0,100000)};
  if(!app().validReceipt(record))return status('Invalid receipt or too-large attachment. Try reducing the PDF/photo size.');
+ const duplicate=app().data.receipts.find(x=>x.id!==record.id&&x.merchant.trim().toLowerCase()===record.merchant.trim().toLowerCase()&&x.date===record.date&&Math.abs(Number(x.totalCAD)-record.totalCAD)<0.01);if(duplicate&&!confirm('Another receipt from the same retailer, date and total is already saved. Recording this again may double-count the purchase. Continue anyway?'))return;
  if(!confirm('Record '+merchant+' · '+fmt(record.totalCAD)+' CAD, including taxes, as one paid invoice?'))return;
  const a=app().data.receipts,i=a.findIndex(x=>x.id===record.id);if(i<0)a.unshift(record);else a[i]=record;await app().save();$('receiptdialog').close();file=null;app().render();if(app().saveError)alert('Storage failed. Export a JSON backup now.');
 }
